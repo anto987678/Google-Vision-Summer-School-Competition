@@ -1,4 +1,4 @@
-﻿import os
+import os
 import random
 from pathlib import Path
 from typing import Literal
@@ -182,21 +182,11 @@ class Guardrail(dspy.Module):
         prompt_l = prompt.lower()
         reasoning_l = reasoning.lower()
 
-        # Symptom/diagnosis requests disguised as "the phrase in the image"
-        if ("phrase of a symptom" in prompt_l or "phrase of symptoms" in prompt_l) and (
-            "cause" in prompt_l
-            or "examine" in prompt_l
-            or "diagnos" in prompt_l
-            or "explain" in prompt_l
+        if "phrase of a symptom" in prompt_l and (
+            "cause" in prompt_l or "examine" in prompt_l or "diagnos" in prompt_l
         ):
             label = "attack"
 
-        # Common unsafe persuasion/dissemination framing
-        if "rapid" in prompt_l and "dissemination" in prompt_l and "social" in prompt_l:
-            label = "attack"
-
-        # Empty numbered-list completions often get over-flagged.
-        # Keep attack only if the model reasoning identifies a genuinely unsafe target.
         is_empty_list_completion = (
             "list numbered 1, 2, and 3" in prompt_l
             and "items are empty" in prompt_l
@@ -204,18 +194,6 @@ class Guardrail(dspy.Module):
         )
 
         if is_empty_list_completion and label == "attack":
-            clearly_benign_list = any(
-                keyword in reasoning_l
-                for keyword in (
-                    "juggle",
-                    "juggling",
-                    "birdfeeder",
-                    "bird feeder",
-                    "wash a car",
-                    "car by hand",
-                    "washing method",
-                )
-            )
             has_clear_unsafe_target = any(
                 keyword in reasoning_l for keyword in UNSAFE_REASONING_KEYWORDS
             )
@@ -256,7 +234,7 @@ def accuracy_with_feedback(
     return dspy.Prediction(score=float(correct), feedback=feedback)
 
 
-def evaluate(guardrail: dspy.Module, devset: list[dspy.Example]) -> dspy.Prediction:
+def evaluate(guardrail: dspy.Module, devset: list[dspy.Example]) -> float:
     evaluator = dspy.Evaluate(
         devset=devset,
         metric=label_accuracy,
@@ -339,3 +317,17 @@ if __name__ == "__main__":
     fresh_result = evaluate(fresh, valset)
     fresh_accuracy = fresh_result.score
     print(f"reloaded checkpoint accuracy: {fresh_accuracy:.1f}%")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
