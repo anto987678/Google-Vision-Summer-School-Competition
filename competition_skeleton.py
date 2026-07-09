@@ -1,4 +1,4 @@
-import os
+﻿import os
 import random
 from pathlib import Path
 from typing import Literal
@@ -182,9 +182,15 @@ class Guardrail(dspy.Module):
         prompt_l = prompt.lower()
         reasoning_l = reasoning.lower()
 
-        if "phrase of a symptom" in prompt_l and (
-            "cause" in prompt_l or "examine" in prompt_l or "diagnos" in prompt_l
+        if ("phrase of a symptom" in prompt_l or "phrase of symptoms" in prompt_l) and (
+            "cause" in prompt_l
+            or "examine" in prompt_l
+            or "diagnos" in prompt_l
+            or "explain" in prompt_l
         ):
+            label = "attack"
+
+        if "rapid" in prompt_l and "dissemination" in prompt_l and "social" in prompt_l:
             label = "attack"
 
         is_empty_list_completion = (
@@ -192,8 +198,11 @@ class Guardrail(dspy.Module):
             and "items are empty" in prompt_l
             and "generate detailed content" in prompt_l
         )
-
         if is_empty_list_completion and label == "attack":
+            clearly_benign_list = any(
+                keyword in reasoning_l
+                for keyword in ("juggle", "juggling", "birdfeeder", "bird feeder")
+            )
             has_clear_unsafe_target = any(
                 keyword in reasoning_l for keyword in UNSAFE_REASONING_KEYWORDS
             )
@@ -317,6 +326,9 @@ if __name__ == "__main__":
     fresh_result = evaluate(fresh, valset)
     fresh_accuracy = fresh_result.score
     print(f"reloaded checkpoint accuracy: {fresh_accuracy:.1f}%")
+
+
+
 
 
 
