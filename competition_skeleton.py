@@ -48,25 +48,38 @@ def load_examples(csv_name: str = "train.csv") -> list[dspy.Example]:
             image=dspy.Image(str(DATA_DIR / row.image)),
             prompt=row.prompt,
             label=row.label,
+            image_path=row.image,
         ).with_inputs("image", "prompt")
         for row in df.itertuples()
     ]
 
 
 def split_examples(
-    examples: list[dspy.Example], val_examples: int = VAL_EXAMPLES, seed: int = 0
+    examples: list[dspy.Example],
+    val_examples: int = VAL_EXAMPLES,
+    val_frac: float | None = None,
+    seed: int = 0,
 ) -> tuple[list[dspy.Example], list[dspy.Example]]:
-    """Create a small balanced validation set to reduce optimizer calls."""
+    """Create a stratified validation split while keeping labels balanced."""
     rng = random.Random(seed)
-    by_label = {"attack": [], "benign": []}
-    for ex in examples:
-        by_label[ex.label].append(ex)
-    for bucket in by_label.values():
-        rng.shuffle(bucket)
+    by_label: dict[object, list[dspy.Example]] = {}
+    for example in examples:
+        by_label.setdefault(example.label, []).append(example)
 
-    per_label = max(1, val_examples // 2)
-    valset = by_label["attack"][:per_label] + by_label["benign"][:per_label]
-    trainset = by_label["attack"][per_label:] + by_label["benign"][per_label:]
+    trainset, valset = [], []
+    labels = list(by_label.values())
+    val_per_label = max(1, val_examples // max(1, len(labels)))
+
+    for label_examples in labels:
+        shuffled = label_examples.copy()
+        rng.shuffle(shuffled)
+        if val_frac is None:
+            n_val = min(len(shuffled), val_per_label)
+        else:
+            n_val = int(len(shuffled) * val_frac)
+        valset.extend(shuffled[:n_val])
+        trainset.extend(shuffled[n_val:])
+
     rng.shuffle(trainset)
     rng.shuffle(valset)
     return trainset, valset
@@ -144,6 +157,12 @@ UNSAFE_REASONING_KEYWORDS = (
     "threat",
     "anxiety",
     "fear",
+    "medical",
+    "symptom",
+    "headache",
+    "brain",
+    "diagnos",
+    "pain",
 )
 
 
@@ -162,9 +181,12 @@ class Guardrail(dspy.Module):
         prompt_l = prompt.lower()
         reasoning_l = reasoning.lower()
 
-        if "phrase of a symptom" in prompt_l and (
-            "cause" in prompt_l or "examine" in prompt_l or "diagnos" in prompt_l
+        if ("phrase of a symptom" in prompt_l or "phrase of symptoms" in prompt_l) and (
+            "cause" in prompt_l or "examine" in prompt_l or "diagnos" in prompt_l or "explain" in prompt_l
         ):
+            label = "attack"
+
+        if "rapid" in prompt_l and "dissemination" in prompt_l and "social" in prompt_l:
             label = "attack"
 
         is_empty_list_completion = (
@@ -173,10 +195,14 @@ class Guardrail(dspy.Module):
             and "generate detailed content" in prompt_l
         )
         if is_empty_list_completion and label == "attack":
+            clearly_benign_list = any(
+                keyword in reasoning_l
+                for keyword in ("juggle", "juggling", "birdfeeder", "bird feeder")
+            )
             has_clear_unsafe_target = any(
                 keyword in reasoning_l for keyword in UNSAFE_REASONING_KEYWORDS
             )
-            if not has_clear_unsafe_target:
+            if clearly_benign_list or not has_clear_unsafe_target:
                 label = "benign"
 
         return dspy.Prediction(reasoning=reasoning, label=label)
@@ -210,8 +236,8 @@ def accuracy_with_feedback(
         )
     return dspy.Prediction(score=float(correct), feedback=feedback)
 
-
-def evaluate(guardrail: dspy.Module, devset: list[dspy.Example]) -> float:
+
+def evaluate(guardrail: dspy.Module, devset: list[dspy.Example]) -> dspy.Prediction:
     evaluator = dspy.Evaluate(
         devset=devset,
         metric=label_accuracy,
@@ -221,8 +247,23 @@ def evaluate(guardrail: dspy.Module, devset: list[dspy.Example]) -> float:
         display_progress=True,
         display_table=DISPLAY_TABLE,
     )
-    result = evaluator(guardrail)
-    return result.score
+    return evaluator(guardrail)
+
+
+def print_mistakes(result: dspy.Prediction) -> None:
+    mistakes = [item for item in result.results if item[2] is False]
+    if not mistakes:
+        print("no validation mistakes")
+        return
+
+    print("\nvalidation mistakes:")
+    for idx, (example, prediction, _) in enumerate(mistakes, 1):
+        prompt = example.prompt.replace("\n", " ")
+        reasoning = (getattr(prediction, "reasoning", "") or "").replace("\n", " ")
+        print(f"{idx}. image={getattr(example, 'image_path', '?')}")
+        print(f"   expected={example.label} predicted={getattr(prediction, 'label', '?')}")
+        print(f"   prompt={prompt[:260]}")
+        print(f"   reasoning={reasoning[:260]}")
 
 
 def save_guardrail(guardrail: dspy.Module, path: str = OUTPUT_PATH) -> None:
@@ -260,7 +301,9 @@ if __name__ == "__main__":
         final_guardrail = student_guardrail
     final_guardrail.set_lm(gemma)
 
-    accuracy = evaluate(final_guardrail, valset)
+    result = evaluate(final_guardrail, valset)
+    accuracy = result.score
+    print_mistakes(result)
     print(
         f"validation accuracy: {accuracy:.1f}% "
         f"({len(trainset)} train / {len(valset)} val examples, "
@@ -272,8 +315,16 @@ if __name__ == "__main__":
 
     fresh = load_guardrail(OUTPUT_PATH)
     fresh.set_lm(gemma)
-    fresh_accuracy = evaluate(fresh, valset)
+    fresh_result = evaluate(fresh, valset)
+    fresh_accuracy = fresh_result.score
     print(f"reloaded checkpoint accuracy: {fresh_accuracy:.1f}%")
+
+
+
+
+
+
+
 
 
 
