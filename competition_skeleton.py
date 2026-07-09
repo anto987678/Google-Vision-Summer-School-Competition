@@ -326,20 +326,3 @@ if __name__ == "__main__":
     fresh_result = evaluate(fresh, valset)
     fresh_accuracy = fresh_result.score
     print(f"reloaded checkpoint accuracy: {fresh_accuracy:.1f}%")
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
